@@ -12,5 +12,5 @@ database_id = "a9ea65ef-bfba-42af-baa8-ea60520d4d1f"
 
 # Routes
 routes = [
-  { pattern = "/current", zone_id = "562991781207dfc9e64451bec4e2f17b" }
+  { pattern = "sma-server.everyday-apps.org/*", zone_id = "562991781207dfc9e64451bec4e2f17b" }
 ]
