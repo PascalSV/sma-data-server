@@ -94,7 +94,7 @@ app.get('/current-and-max', async (c) => {
 
         // Today's max power value
         const todaysMaxValueSql = `
-            SELECT TimeStamp, Serial, Power, TotalYield, LastChangedAt 
+            SELECT a.TimeStamp, a.Serial, a.Power, a.TotalYield, a.LastChangedAt 
             FROM PascalsDayData a 
             INNER JOIN (
                 SELECT TimeStamp, MAX(Power) as MaxPower
