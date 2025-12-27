@@ -205,6 +205,39 @@ app.get('/today', async (c) => {
     }
 });
 
+// Yearly yield endpoint
+app.get('/yearly-yield', async (c) => {
+    try {
+        const db = c.env.DB;
+        const yearlyYieldSql = `
+            SELECT 
+                strftime('%Y', timestamp, 'unixepoch') AS year,
+                MAX(TotalYield) AS total_yield
+            FROM PascalsDayData
+            GROUP BY strftime('%Y', timestamp, 'unixepoch')
+            ORDER BY year DESC;
+        `;
+
+        const response = await db.prepare(yearlyYieldSql).all<{ year: string; total_yield: number }>();
+        const rows = response?.results || [];
+
+        return c.json({
+            success: true,
+            data: rows,
+        });
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        return c.json(
+            {
+                success: false,
+                error: 'Failed to fetch yearly yield data',
+                details: errorMessage,
+            },
+            { status: 500 }
+        );
+    }
+});
+
 // Catch-all for undefined routes
 app.all('*', (c) => {
     return c.json(

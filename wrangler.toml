@@ -1,5 +1,4 @@
 name = "solar-meter-server"
-type = "service"
 main = "src/index.ts"
 
 compatibility_date = "2025-01-09"
@@ -11,6 +10,6 @@ database_name = "solar_meter_values"
 database_id = "a9ea65ef-bfba-42af-baa8-ea60520d4d1f"
 
 # Routes
-routes = [
-  { pattern = "sma-server.everyday-apps.org/*", zone_id = "562991781207dfc9e64451bec4e2f17b" }
-]
+[[routes]]
+pattern = "sma-data-server.everyday-apps.org/*"
+zone_id = "562991781207dfc9e64451bec4e2f17b"
