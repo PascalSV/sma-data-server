@@ -1,0 +1,21 @@
+{
+    "name": "solar-meter-api",
+    "version": "1.0.0",
+    "description": "Cloudflare Workers API for accessing D1 solar meter database",
+    "main": "src/index.ts",
+    "scripts": {
+        "dev": "wrangler dev --remote",
+        "deploy": "wrangler deploy",
+        "build": "wrangler build",
+        "type-check": "tsc --noEmit"
+    },
+    "dependencies": {
+        "hono": "^4.0.0"
+    },
+    "devDependencies": {
+        "@cloudflare/workers-types": "^4.20250101.0",
+        "wrangler": "^4.54.0",
+        "typescript": "^5.3.3",
+        "tsx": "^4.7.0"
+    }
+}
