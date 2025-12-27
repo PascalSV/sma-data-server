@@ -1,4 +1,4 @@
-name = "solar-meter-api"
+name = "solar-meter-server"
 type = "service"
 main = "src/index.ts"
 
