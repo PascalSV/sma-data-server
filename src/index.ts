@@ -17,27 +17,81 @@ interface DayDataRecord {
 
 interface CloudflareEnv {
     DB: D1Database;
-    CLIENT_CERT_SUBJECT: string;
+    SMA_DATA_SERVER_API_SECRET: string;
 }
 
 const app = new Hono<{ Bindings: CloudflareEnv }>();
 
-// Middleware to validate client certificate
-const validateClientCertificate = async (c: any, next: any) => {
-    const expectedSubject = c.env.CLIENT_CERT_SUBJECT;
+const validateApiSecret = async (c: any, next: any) => {
+    const apiSecret = c.env.SMA_DATA_SERVER_API_SECRET;
 
-    if (!expectedSubject) {
-        console.error('CLIENT_CERT_SUBJECT environment variable is not configured');
+    if (!apiSecret) {
+        console.error('SMA_DATA_SERVER_API_SECRET environment variable is not configured');
         return c.json(
             {
                 success: false,
                 error: 'Server configuration error',
-                message: 'CLIENT_CERT_SUBJECT environment variable is not configured',
+                message: 'SMA_DATA_SERVER_API_SECRET is not configured',
             },
             { status: 500 }
         );
     }
 
+    // Get the secret from Authorization header (Bearer token) or x-api-key header
+    const authHeader = c.req.header('authorization');
+    const apiKeyHeader = c.req.header('x-api-key');
+
+    let providedSecret: string | null = null;
+
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        providedSecret = authHeader.substring(7);
+    } else if (apiKeyHeader) {
+        providedSecret = apiKeyHeader;
+    }
+
+    if (!providedSecret) {
+        console.warn('API authentication failed: No API key provided', {
+            endpoint: '/new_entries',
+            clientIp: c.req.header('cf-connecting-ip'),
+            userAgent: c.req.header('user-agent'),
+        });
+        return c.json(
+            {
+                success: false,
+                error: 'Authentication required',
+                message: 'Please provide an API key via Authorization header (Bearer token) or X-API-Key header',
+            },
+            { status: 401 }
+        );
+    }
+
+    if (providedSecret !== apiSecret) {
+        console.warn('API authentication failed: Invalid API key', {
+            endpoint: '/new_entries',
+            clientIp: c.req.header('cf-connecting-ip'),
+            userAgent: c.req.header('user-agent'),
+        });
+        return c.json(
+            {
+                success: false,
+                error: 'Authentication failed',
+                message: 'Invalid API key',
+            },
+            { status: 403 }
+        );
+    }
+
+    // Authentication successful
+    console.info('API authentication successful', {
+        endpoint: '/new_entries',
+        clientIp: c.req.header('cf-connecting-ip'),
+    });
+
+    await next();
+};
+
+// Middleware to validate client certificate
+const validateClientCertificate = async (c: any, next: any) => {
     // Get certificate information from Cloudflare's cf object
     const cfObject = c.req.raw.cf;
     const tlsClientAuth = cfObject?.tlsClientAuth;
@@ -60,13 +114,14 @@ const validateClientCertificate = async (c: any, next: any) => {
         );
     }
 
-    // Check if certificate was verified
+    // Check if certificate was verified by Cloudflare (against the configured CA)
     if (tlsClientAuth.certVerified !== 'SUCCESS') {
         console.warn('Client certificate authentication failed: Certificate verification failed', {
             endpoint: '/new_entries',
             clientIp: c.req.header('cf-connecting-ip'),
             userAgent: c.req.header('user-agent'),
             certVerified: tlsClientAuth.certVerified,
+            certSubject: tlsClientAuth.certSubjectDNLegacy || tlsClientAuth.certSubjectDN,
             tlsClientAuth,
         });
         return c.json(
@@ -79,47 +134,13 @@ const validateClientCertificate = async (c: any, next: any) => {
         );
     }
 
-    // Extract the certificate subject DN (try multiple formats)
-    const certificateSubject = tlsClientAuth.certSubjectDNLegacy ||
-        tlsClientAuth.certSubjectDN ||
-        tlsClientAuth.certSubjectDNRFC2253;
+    // Certificate is valid and trusted by Cloudflare
+    console.info('Client certificate authenticated successfully', {
+        endpoint: '/new_entries',
+        certSubject: tlsClientAuth.certSubjectDNLegacy || tlsClientAuth.certSubjectDN,
+        clientIp: c.req.header('cf-connecting-ip'),
+    });
 
-    if (!certificateSubject) {
-        console.error('Client certificate authentication failed: Could not extract certificate subject', {
-            endpoint: '/new_entries',
-            tlsClientAuth,
-        });
-        return c.json(
-            {
-                success: false,
-                error: 'Certificate processing error',
-                message: 'Could not extract certificate subject from the provided certificate',
-            },
-            { status: 403 }
-        );
-    }
-
-    // Validate certificate subject matches expected value
-    if (certificateSubject !== expectedSubject) {
-        console.warn('Client certificate authentication failed: Invalid certificate subject', {
-            endpoint: '/new_entries',
-            received: certificateSubject,
-            expected: expectedSubject,
-            clientIp: c.req.header('cf-connecting-ip'),
-            userAgent: c.req.header('user-agent'),
-        });
-        return c.json(
-            {
-                success: false,
-                error: 'Invalid client certificate',
-                message: 'The provided certificate subject does not match the expected value',
-                received: certificateSubject,
-            },
-            { status: 403 }
-        );
-    }
-
-    // Certificate is valid, proceed to the next handler
     await next();
 };
 
@@ -341,7 +362,7 @@ app.get('/yearly-yield', async (c) => {
 });
 
 // New entries endpoint - upsert records
-app.post('/new_entries', validateClientCertificate, async (c) => {
+app.post('/new_entries', validateApiSecret, async (c) => {
     try {
         const db = c.env.DB;
         const body = await c.req.json();

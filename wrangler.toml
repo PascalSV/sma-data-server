@@ -14,6 +14,9 @@ database_id = "a9ea65ef-bfba-42af-baa8-ea60520d4d1f"
 pattern = "sma-data-server.everyday-apps.org/*"
 zone_id = "562991781207dfc9e64451bec4e2f17b"
 
+# Secrets (managed via: wrangler secret put <SECRET_NAME>)
+# - API_SECRET: API key for authenticating requests to /new_entries endpoint
+
 [observability]
 enabled = false
 head_sampling_rate = 1
