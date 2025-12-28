@@ -27,6 +27,7 @@ const validateClientCertificate = async (c: any, next: any) => {
     const expectedSubject = c.env.CLIENT_CERT_SUBJECT;
 
     if (!expectedSubject) {
+        console.error('CLIENT_CERT_SUBJECT environment variable is not configured');
         return c.json(
             {
                 success: false,
@@ -49,6 +50,11 @@ const validateClientCertificate = async (c: any, next: any) => {
     const certificateSubject = certSubjectHeader || certSubjectFromCf;
 
     if (!certificateSubject) {
+        console.warn('Client certificate authentication failed: No certificate provided', {
+            endpoint: '/new_entries',
+            clientIp: c.req.header('cf-connecting-ip'),
+            userAgent: c.req.header('user-agent'),
+        });
         return c.json(
             {
                 success: false,
@@ -60,6 +66,13 @@ const validateClientCertificate = async (c: any, next: any) => {
     }
 
     if (certificateSubject !== expectedSubject) {
+        console.warn('Client certificate authentication failed: Invalid certificate subject', {
+            endpoint: '/new_entries',
+            received: certificateSubject,
+            expected: expectedSubject,
+            clientIp: c.req.header('cf-connecting-ip'),
+            userAgent: c.req.header('user-agent'),
+        });
         return c.json(
             {
                 success: false,
