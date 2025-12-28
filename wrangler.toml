@@ -1,4 +1,4 @@
-name = "solar-meter-server"
+name = "sma-data-server"
 main = "src/index.ts"
 
 compatibility_date = "2025-01-09"
