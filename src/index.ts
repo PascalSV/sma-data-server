@@ -361,7 +361,8 @@ app.post('/new_entries', validateApiSecret, async (c) => {
             const upsertSql = `
                 INSERT INTO PascalsDayData (TimeStamp, Serial, Power, TotalYield, LastChangedAt)
                 VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(TimeStamp, Serial) DO UPDATE SET
+                ON CONFLICT(TimeStamp) DO UPDATE SET
+                    Serial = excluded.Serial,
                     Power = excluded.Power,
                     TotalYield = excluded.TotalYield,
                     LastChangedAt = excluded.LastChangedAt;
