@@ -17,9 +17,63 @@ interface DayDataRecord {
 
 interface CloudflareEnv {
     DB: D1Database;
+    CLIENT_CERT_SUBJECT: string;
 }
 
 const app = new Hono<{ Bindings: CloudflareEnv }>();
+
+// Middleware to validate client certificate
+const validateClientCertificate = async (c: any, next: any) => {
+    const expectedSubject = c.env.CLIENT_CERT_SUBJECT;
+
+    if (!expectedSubject) {
+        return c.json(
+            {
+                success: false,
+                error: 'Server configuration error',
+                message: 'CLIENT_CERT_SUBJECT environment variable is not configured',
+            },
+            { status: 500 }
+        );
+    }
+
+    // Try to get certificate subject from various possible sources in Cloudflare Workers
+    const certSubjectHeader = c.req.header('cf-client-cert-subject') ||
+        c.req.header('x-client-cert-subject') ||
+        c.req.header('client-cert-subject');
+
+    // Also check the cf object for certificate information
+    const cfObject = c.req.raw.cf;
+    const certSubjectFromCf = cfObject?.tlsClientAuth;
+
+    const certificateSubject = certSubjectHeader || certSubjectFromCf;
+
+    if (!certificateSubject) {
+        return c.json(
+            {
+                success: false,
+                error: 'Client certificate required',
+                message: 'This endpoint requires mutual TLS authentication',
+            },
+            { status: 403 }
+        );
+    }
+
+    if (certificateSubject !== expectedSubject) {
+        return c.json(
+            {
+                success: false,
+                error: 'Invalid client certificate',
+                message: 'The provided certificate subject does not match the expected value',
+                received: certificateSubject,
+            },
+            { status: 403 }
+        );
+    }
+
+    // Certificate is valid, proceed to the next handler
+    await next();
+};
 
 // Health check endpoint
 app.get('/health', (c) => {
@@ -231,6 +285,107 @@ app.get('/yearly-yield', async (c) => {
             {
                 success: false,
                 error: 'Failed to fetch yearly yield data',
+                details: errorMessage,
+            },
+            { status: 500 }
+        );
+    }
+});
+
+// New entries endpoint - upsert records
+app.post('/new_entries', validateClientCertificate, async (c) => {
+    try {
+        const db = c.env.DB;
+        const body = await c.req.json();
+
+        // Ensure body is an array
+        const entries = Array.isArray(body) ? body : [body];
+
+        if (entries.length === 0) {
+            return c.json(
+                {
+                    success: false,
+                    error: 'No entries provided',
+                },
+                { status: 400 }
+            );
+        }
+
+        // Validate entries
+        const validEntries: DayDataRecord[] = [];
+        const errors: { index: number; message: string }[] = [];
+
+        entries.forEach((entry: any, index: number) => {
+            if (!entry.TimeStamp || !entry.Serial || entry.Power === undefined || entry.TotalYield === undefined || !entry.LastChangedAt) {
+                errors.push({
+                    index,
+                    message: 'Missing required fields: TimeStamp, Serial, Power, TotalYield, LastChangedAt',
+                });
+            } else {
+                validEntries.push(entry as DayDataRecord);
+            }
+        });
+
+        if (validEntries.length === 0) {
+            return c.json(
+                {
+                    success: false,
+                    error: 'No valid entries to insert',
+                    validationErrors: errors,
+                },
+                { status: 400 }
+            );
+        }
+
+        // Upsert valid entries
+        const results = [];
+        for (const entry of validEntries) {
+            const upsertSql = `
+                INSERT INTO PascalsDayData (TimeStamp, Serial, Power, TotalYield, LastChangedAt)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(TimeStamp, Serial) DO UPDATE SET
+                    Power = excluded.Power,
+                    TotalYield = excluded.TotalYield,
+                    LastChangedAt = excluded.LastChangedAt;
+            `;
+
+            try {
+                await db.prepare(upsertSql).bind(
+                    entry.TimeStamp,
+                    entry.Serial,
+                    entry.Power,
+                    entry.TotalYield,
+                    entry.LastChangedAt
+                ).run();
+
+                results.push({
+                    timestamp: entry.TimeStamp,
+                    serial: entry.Serial,
+                    status: 'inserted_or_updated',
+                });
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                results.push({
+                    timestamp: entry.TimeStamp,
+                    serial: entry.Serial,
+                    status: 'failed',
+                    error: errorMessage,
+                });
+            }
+        }
+
+        return c.json({
+            success: true,
+            inserted: validEntries.length,
+            results,
+            validationErrors: errors.length > 0 ? errors : undefined,
+        });
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        return c.json(
+            {
+                success: false,
+                error: 'Failed to insert new entries',
                 details: errorMessage,
             },
             { status: 500 }
