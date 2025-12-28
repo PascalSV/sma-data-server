@@ -38,33 +38,68 @@ const validateClientCertificate = async (c: any, next: any) => {
         );
     }
 
-    // Try to get certificate subject from various possible sources in Cloudflare Workers
-    const certSubjectHeader = c.req.header('cf-client-cert-subject') ||
-        c.req.header('x-client-cert-subject') ||
-        c.req.header('client-cert-subject');
-
-    // Also check the cf object for certificate information
+    // Get certificate information from Cloudflare's cf object
     const cfObject = c.req.raw.cf;
-    const certSubjectFromCf = cfObject?.tlsClientAuth;
+    const tlsClientAuth = cfObject?.tlsClientAuth;
 
-    const certificateSubject = certSubjectHeader || certSubjectFromCf;
-
-    if (!certificateSubject) {
-        console.warn('Client certificate authentication failed: No certificate provided', {
+    // Check if certificate was presented
+    if (!tlsClientAuth || tlsClientAuth.certPresented !== '1') {
+        console.warn('Client certificate authentication failed: No certificate presented', {
             endpoint: '/new_entries',
             clientIp: c.req.header('cf-connecting-ip'),
             userAgent: c.req.header('user-agent'),
+            tlsClientAuth,
         });
         return c.json(
             {
                 success: false,
                 error: 'Client certificate required',
-                message: 'This endpoint requires mutual TLS authentication',
+                message: 'This endpoint requires mutual TLS authentication. No certificate was presented.',
             },
             { status: 403 }
         );
     }
 
+    // Check if certificate was verified
+    if (tlsClientAuth.certVerified !== 'SUCCESS') {
+        console.warn('Client certificate authentication failed: Certificate verification failed', {
+            endpoint: '/new_entries',
+            clientIp: c.req.header('cf-connecting-ip'),
+            userAgent: c.req.header('user-agent'),
+            certVerified: tlsClientAuth.certVerified,
+            tlsClientAuth,
+        });
+        return c.json(
+            {
+                success: false,
+                error: 'Invalid client certificate',
+                message: `Certificate verification failed: ${tlsClientAuth.certVerified}`,
+            },
+            { status: 403 }
+        );
+    }
+
+    // Extract the certificate subject DN (try multiple formats)
+    const certificateSubject = tlsClientAuth.certSubjectDNLegacy ||
+        tlsClientAuth.certSubjectDN ||
+        tlsClientAuth.certSubjectDNRFC2253;
+
+    if (!certificateSubject) {
+        console.error('Client certificate authentication failed: Could not extract certificate subject', {
+            endpoint: '/new_entries',
+            tlsClientAuth,
+        });
+        return c.json(
+            {
+                success: false,
+                error: 'Certificate processing error',
+                message: 'Could not extract certificate subject from the provided certificate',
+            },
+            { status: 403 }
+        );
+    }
+
+    // Validate certificate subject matches expected value
     if (certificateSubject !== expectedSubject) {
         console.warn('Client certificate authentication failed: Invalid certificate subject', {
             endpoint: '/new_entries',
