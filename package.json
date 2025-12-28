@@ -1,5 +1,5 @@
 {
-    "name": "solar-meter-api",
+    "name": "sma-data-server",
     "version": "1.0.0",
     "description": "Cloudflare Workers API for accessing D1 solar meter database",
     "main": "src/index.ts",
