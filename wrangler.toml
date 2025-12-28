@@ -13,3 +13,18 @@ database_id = "a9ea65ef-bfba-42af-baa8-ea60520d4d1f"
 [[routes]]
 pattern = "sma-data-server.everyday-apps.org/*"
 zone_id = "562991781207dfc9e64451bec4e2f17b"
+
+[observability]
+enabled = false
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1
