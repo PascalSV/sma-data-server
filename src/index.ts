@@ -354,6 +354,9 @@ app.post('/new_entries', validateApiSecret, async (c) => {
 
         // Upsert valid entries
         const results = [];
+        let successCount = 0;
+        let failureCount = 0;
+
         for (const entry of validEntries) {
             const upsertSql = `
                 INSERT INTO PascalsDayData (TimeStamp, Serial, Power, TotalYield, LastChangedAt)
@@ -365,7 +368,14 @@ app.post('/new_entries', validateApiSecret, async (c) => {
             `;
 
             try {
-                await db.prepare(upsertSql).bind(
+                console.info('Attempting to upsert entry', {
+                    timestamp: entry.TimeStamp,
+                    serial: entry.Serial,
+                    power: entry.Power,
+                    totalYield: entry.TotalYield,
+                });
+
+                const result = await db.prepare(upsertSql).bind(
                     entry.TimeStamp,
                     entry.Serial,
                     entry.Power,
@@ -373,30 +383,52 @@ app.post('/new_entries', validateApiSecret, async (c) => {
                     entry.LastChangedAt
                 ).run();
 
+                console.info('Upsert successful', {
+                    timestamp: entry.TimeStamp,
+                    serial: entry.Serial,
+                    dbResult: result,
+                });
+
                 results.push({
                     timestamp: entry.TimeStamp,
                     serial: entry.Serial,
                     status: 'inserted_or_updated',
                 });
+                successCount++;
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                console.error('Upsert failed', {
+                    timestamp: entry.TimeStamp,
+                    serial: entry.Serial,
+                    error: errorMessage,
+                    fullError: error,
+                });
+
                 results.push({
                     timestamp: entry.TimeStamp,
                     serial: entry.Serial,
                     status: 'failed',
                     error: errorMessage,
                 });
+                failureCount++;
             }
         }
 
         return c.json({
-            success: true,
-            inserted: validEntries.length,
+            success: failureCount === 0,
+            inserted: successCount,
+            failed: failureCount,
+            total: validEntries.length,
             results,
             validationErrors: errors.length > 0 ? errors : undefined,
         });
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error('new_entries endpoint error', {
+            error: errorMessage,
+            fullError: error,
+        });
+
         return c.json(
             {
                 success: false,
