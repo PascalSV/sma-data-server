@@ -90,60 +90,6 @@ const validateApiSecret = async (c: any, next: any) => {
     await next();
 };
 
-// Middleware to validate client certificate
-const validateClientCertificate = async (c: any, next: any) => {
-    // Get certificate information from Cloudflare's cf object
-    const cfObject = c.req.raw.cf;
-    const tlsClientAuth = cfObject?.tlsClientAuth;
-
-    // Check if certificate was presented
-    if (!tlsClientAuth || tlsClientAuth.certPresented !== '1') {
-        console.warn('Client certificate authentication failed: No certificate presented', {
-            endpoint: '/new_entries',
-            clientIp: c.req.header('cf-connecting-ip'),
-            userAgent: c.req.header('user-agent'),
-            tlsClientAuth,
-        });
-        return c.json(
-            {
-                success: false,
-                error: 'Client certificate required',
-                message: 'This endpoint requires mutual TLS authentication. No certificate was presented.',
-            },
-            { status: 403 }
-        );
-    }
-
-    // Check if certificate was verified by Cloudflare (against the configured CA)
-    if (tlsClientAuth.certVerified !== 'SUCCESS') {
-        console.warn('Client certificate authentication failed: Certificate verification failed', {
-            endpoint: '/new_entries',
-            clientIp: c.req.header('cf-connecting-ip'),
-            userAgent: c.req.header('user-agent'),
-            certVerified: tlsClientAuth.certVerified,
-            certSubject: tlsClientAuth.certSubjectDNLegacy || tlsClientAuth.certSubjectDN,
-            tlsClientAuth,
-        });
-        return c.json(
-            {
-                success: false,
-                error: 'Invalid client certificate',
-                message: `Certificate verification failed: ${tlsClientAuth.certVerified}`,
-            },
-            { status: 403 }
-        );
-    }
-
-    // Certificate is valid and trusted by Cloudflare
-    console.info('Client certificate authenticated successfully', {
-        endpoint: '/new_entries',
-        certSubject: tlsClientAuth.certSubjectDNLegacy || tlsClientAuth.certSubjectDN,
-        clientIp: c.req.header('cf-connecting-ip'),
-    });
-
-    await next();
-};
-
 // Health check endpoint
 app.get('/health', (c) => {
     return c.json({ status: 'ok' });
