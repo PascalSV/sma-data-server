@@ -15,6 +15,13 @@ interface DayDataRecord {
     LastChangedAt: string;
 }
 
+interface CurrentAndMaxData {
+    totalYieldDifference: number | null;
+    maxPower: number | null;
+    currentPower: number | null;
+    latestTimestamp: string | null;
+}
+
 interface CloudflareEnv {
     DB: D1Database;
     SMA_DATA_SERVER_API_SECRET: string;
@@ -144,50 +151,23 @@ app.get('/current', async (c) => {
 app.get('/current-and-max', async (c) => {
     try {
         const db = c.env.DB;
-        const result: DayDataRecord[] = [];
-
-        // Today's first value
-        const todaysFirstValueSql = `
-            SELECT TimeStamp, Serial, Power, TotalYield, LastChangedAt 
-            FROM PascalsDayData a 
-            INNER JOIN (
-                SELECT MIN(TimeStamp) AS FirstTimeStamp 
-                FROM PascalsDayData b 
-                WHERE TimeStamp >= CAST(strftime('%s','now','start of day') AS INT)
-            ) b ON a.TimeStamp = b.FirstTimeStamp;
+        const currentAndMaxSql = `
+            SELECT
+                (
+                    (SELECT TotalYield FROM PascalsDayData ORDER BY TimeStamp DESC LIMIT 1) -
+                    (SELECT TotalYield FROM PascalsDayData WHERE TimeStamp >= CAST(strftime('%s','now','start of day') AS INT) ORDER BY TimeStamp ASC LIMIT 1)
+                ) AS totalYieldDifference,
+                (SELECT MAX(Power) FROM PascalsDayData WHERE TimeStamp >= CAST(strftime('%s','now','start of day') AS INT)) AS maxPower,
+                (SELECT Power FROM PascalsDayData ORDER BY TimeStamp DESC LIMIT 1) AS currentPower,
+                (SELECT strftime('%Y-%m-%d %H:%M:%S', TimeStamp, 'unixepoch') FROM PascalsDayData ORDER BY TimeStamp DESC LIMIT 1) AS latestTimestamp;
         `;
-        const firstValue = await db.prepare(todaysFirstValueSql).first<DayDataRecord>();
-        if (firstValue) {
-            result.push(firstValue);
-        }
+        const result = await db.prepare(currentAndMaxSql).first<CurrentAndMaxData>();
 
-        // Today's max power value
-        const todaysMaxValueSql = `
-            SELECT a.TimeStamp, a.Serial, a.Power, a.TotalYield, a.LastChangedAt 
-            FROM PascalsDayData a 
-            INNER JOIN (
-                SELECT TimeStamp, MAX(Power) as MaxPower
-                FROM PascalsDayData b 
-                WHERE TimeStamp >= CAST(strftime('%s','now','start of day') AS INT)
-            ) b ON a.TimeStamp = b.TimeStamp;
-        `;
-        const maxValue = await db.prepare(todaysMaxValueSql).first<DayDataRecord>();
-        if (maxValue) {
-            result.push(maxValue);
-        }
-
-        // Latest value overall
-        const latestValueSql = `
-            SELECT strftime('%Y-%m-%d %H:%M:%S', timestamp, 'unixepoch') AS nice_timestamp, Serial, Power, TotalYield, LastChangedAt 
-            FROM PascalsDayData a 
-            INNER JOIN (
-                SELECT MAX(TimeStamp) as LatestTimeStamp 
-                FROM PascalsDayData b
-            ) b ON a.TimeStamp = b.LatestTimeStamp;
-        `;
-        const latestValue = await db.prepare(latestValueSql).first<DayDataRecord>();
-        if (latestValue) {
-            result.push(latestValue);
+        if (!result || !result.latestTimestamp) {
+            return c.json(
+                { error: 'No data found' },
+                { status: 404 }
+            );
         }
 
         return c.json({
