@@ -110,10 +110,10 @@ app.get('/current', async (c) => {
         const sql = `
       SELECT 
         Power as power, 
-        strftime('%Y-%m-%d %H:%M:%S', timestamp, 'unixepoch') AS nice_timestamp, 
+                strftime('%Y-%m-%d %H:%M:%S', TimeStamp, 'unixepoch') AS timestamp, 
         TotalYield as total_yield
       FROM PascalsDayData
-  order by nice_timestamp desc limit 1;
+    ORDER BY TimeStamp DESC LIMIT 1;
     `;
 
         const result = await db.prepare(sql).first<SolarMeterData>();
@@ -152,14 +152,54 @@ app.get('/current-and-max', async (c) => {
     try {
         const db = c.env.DB;
         const currentAndMaxSql = `
+            WITH normalized AS (
+                SELECT
+                    Power,
+                    TotalYield,
+                    CASE
+                        WHEN TimeStamp > 9999999999 THEN CAST(TimeStamp / 1000 AS INT)
+                        ELSE CAST(TimeStamp AS INT)
+                    END AS ts_sec
+                FROM PascalsDayData
+            ),
+            bounded AS (
+                SELECT *
+                FROM normalized
+                WHERE ts_sec <= CAST(strftime('%s','now') AS INT) + 300
+            ),
+            latest AS (
+                SELECT *
+                FROM bounded
+                ORDER BY ts_sec DESC
+                LIMIT 1
+            ),
+            today AS (
+                SELECT *
+                FROM bounded
+                WHERE ts_sec >= CAST(strftime('%s','now','start of day') AS INT)
+            ),
+            first_today AS (
+                SELECT TotalYield
+                FROM today
+                ORDER BY ts_sec ASC
+                LIMIT 1
+            ),
+            max_today AS (
+                SELECT MAX(Power) AS maxPower
+                FROM today
+            )
             SELECT
-                (
-                    (SELECT TotalYield FROM PascalsDayData ORDER BY TimeStamp DESC LIMIT 1) -
-                    (SELECT TotalYield FROM PascalsDayData WHERE TimeStamp >= CAST(strftime('%s','now','start of day') AS INT) ORDER BY TimeStamp ASC LIMIT 1)
-                ) AS totalYieldDifference,
-                (SELECT MAX(Power) FROM PascalsDayData WHERE TimeStamp >= CAST(strftime('%s','now','start of day') AS INT)) AS maxPower,
-                (SELECT Power FROM PascalsDayData ORDER BY TimeStamp DESC LIMIT 1) AS currentPower,
-                (SELECT strftime('%Y-%m-%d %H:%M:%S', TimeStamp, 'unixepoch') FROM PascalsDayData ORDER BY TimeStamp DESC LIMIT 1) AS latestTimestamp;
+                CASE
+                    WHEN latest.TotalYield IS NOT NULL AND first_today.TotalYield IS NOT NULL
+                    THEN latest.TotalYield - first_today.TotalYield
+                    ELSE NULL
+                END AS totalYieldDifference,
+                max_today.maxPower AS maxPower,
+                latest.Power AS currentPower,
+                strftime('%Y-%m-%d %H:%M:%S', latest.ts_sec, 'unixepoch') AS latestTimestamp
+            FROM latest
+            LEFT JOIN first_today ON 1 = 1
+            LEFT JOIN max_today ON 1 = 1;
         `;
         const result = await db.prepare(currentAndMaxSql).first<CurrentAndMaxData>();
 
