@@ -5,6 +5,8 @@ interface SolarMeterData {
     power: number;
     timestamp: string;
     total_yield: number;
+    totalYieldDifferenceToday: number | null;
+    maxPowerToday: number | null;
 }
 
 interface DayDataRecord {
@@ -108,13 +110,56 @@ app.get('/current', async (c) => {
         const db = c.env.DB;
 
         const sql = `
-      SELECT 
-        Power as power, 
-                strftime('%Y-%m-%d %H:%M:%S', TimeStamp, 'unixepoch') AS timestamp, 
-        TotalYield as total_yield
-      FROM PascalsDayData
-    ORDER BY TimeStamp DESC LIMIT 1;
-    `;
+            WITH normalized AS (
+                SELECT
+                    Power,
+                    TotalYield,
+                    CASE
+                        WHEN TimeStamp > 9999999999 THEN CAST(TimeStamp / 1000 AS INT)
+                        ELSE CAST(TimeStamp AS INT)
+                    END AS ts_sec
+                FROM PascalsDayData
+            ),
+            bounded AS (
+                SELECT *
+                FROM normalized
+                WHERE ts_sec <= CAST(strftime('%s','now') AS INT) + 300
+            ),
+            latest AS (
+                SELECT *
+                FROM bounded
+                ORDER BY ts_sec DESC
+                LIMIT 1
+            ),
+            today AS (
+                SELECT *
+                FROM bounded
+                WHERE ts_sec >= CAST(strftime('%s','now','start of day') AS INT)
+            ),
+            first_today AS (
+                SELECT TotalYield
+                FROM today
+                ORDER BY ts_sec ASC
+                LIMIT 1
+            ),
+            max_today AS (
+                SELECT MAX(Power) AS max_power_today
+                FROM today
+            )
+            SELECT
+                latest.Power AS power,
+                strftime('%Y-%m-%d %H:%M:%S', latest.ts_sec, 'unixepoch') AS timestamp,
+                latest.TotalYield AS total_yield,
+                CASE
+                    WHEN latest.TotalYield IS NOT NULL AND first_today.TotalYield IS NOT NULL
+                    THEN latest.TotalYield - first_today.TotalYield
+                    ELSE NULL
+                END AS totalYieldDifferenceToday,
+                max_today.max_power_today AS maxPowerToday
+            FROM latest
+            LEFT JOIN first_today ON 1 = 1
+            LEFT JOIN max_today ON 1 = 1;
+        `;
 
         const result = await db.prepare(sql).first<SolarMeterData>();
 
@@ -131,6 +176,8 @@ app.get('/current', async (c) => {
                 power: result.power,
                 timestamp: result.timestamp,
                 total_yield: result.total_yield,
+                totalYieldDifferenceToday: result.totalYieldDifferenceToday,
+                maxPowerToday: result.maxPowerToday,
             },
         });
     } catch (error) {
