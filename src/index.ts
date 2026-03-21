@@ -3,7 +3,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 
 interface SolarMeterData {
     power: number;
-    timestamp: string;
+    ts_sec: number;
     total_yield: number;
     totalYieldDifferenceToday: number | null;
     maxPowerToday: number | null;
@@ -21,7 +21,7 @@ interface CurrentAndMaxData {
     totalYieldDifference: number | null;
     maxPower: number | null;
     currentPower: number | null;
-    latestTimestamp: string | null;
+    latestTsSec: number | null;
 }
 
 interface CloudflareEnv {
@@ -30,6 +30,31 @@ interface CloudflareEnv {
 }
 
 const app = new Hono<{ Bindings: CloudflareEnv }>();
+
+const formatEpochSecondsInBerlin = (epochSeconds: number | null | undefined): string | null => {
+    if (!Number.isFinite(epochSeconds)) {
+        return null;
+    }
+
+    const date = new Date((epochSeconds as number) * 1000);
+    if (Number.isNaN(date.getTime())) {
+        return null;
+    }
+
+    const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Europe/Berlin',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+    }).formatToParts(date);
+
+    const partMap = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${partMap.year}-${partMap.month}-${partMap.day} ${partMap.hour}:${partMap.minute}:${partMap.second}`;
+};
 
 const validateApiSecret = async (c: any, next: any) => {
     const apiSecret = c.env.SMA_DATA_SERVER_API_SECRET;
@@ -148,7 +173,7 @@ app.get('/current', async (c) => {
             )
             SELECT
                 latest.Power AS power,
-                strftime('%Y-%m-%d %H:%M:%S', latest.ts_sec, 'unixepoch') AS timestamp,
+                latest.ts_sec AS ts_sec,
                 latest.TotalYield AS total_yield,
                 CASE
                     WHEN latest.TotalYield IS NOT NULL AND first_today.TotalYield IS NOT NULL
@@ -170,11 +195,19 @@ app.get('/current', async (c) => {
             );
         }
 
+        const timestamp = formatEpochSecondsInBerlin(result.ts_sec);
+        if (!timestamp) {
+            return c.json(
+                { error: 'Invalid timestamp' },
+                { status: 500 }
+            );
+        }
+
         return c.json({
             success: true,
             data: {
                 power: result.power,
-                timestamp: result.timestamp,
+                timestamp,
                 total_yield: result.total_yield,
                 totalYieldDifferenceToday: result.totalYieldDifferenceToday,
                 maxPowerToday: result.maxPowerToday,
@@ -243,23 +276,36 @@ app.get('/current-and-max', async (c) => {
                 END AS totalYieldDifference,
                 max_today.maxPower AS maxPower,
                 latest.Power AS currentPower,
-                strftime('%Y-%m-%d %H:%M:%S', latest.ts_sec, 'unixepoch') AS latestTimestamp
+                latest.ts_sec AS latestTsSec
             FROM latest
             LEFT JOIN first_today ON 1 = 1
             LEFT JOIN max_today ON 1 = 1;
         `;
         const result = await db.prepare(currentAndMaxSql).first<CurrentAndMaxData>();
 
-        if (!result || !result.latestTimestamp) {
+        if (!result) {
             return c.json(
                 { error: 'No data found' },
                 { status: 404 }
             );
         }
 
+        const latestTimestamp = formatEpochSecondsInBerlin(result.latestTsSec);
+        if (!latestTimestamp) {
+            return c.json(
+                { error: 'Invalid timestamp' },
+                { status: 500 }
+            );
+        }
+
         return c.json({
             success: true,
-            data: result,
+            data: {
+                totalYieldDifference: result.totalYieldDifference,
+                maxPower: result.maxPower,
+                currentPower: result.currentPower,
+                latestTimestamp,
+            },
         });
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
